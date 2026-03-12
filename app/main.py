@@ -52,6 +52,18 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 def formatar_contexto(docs):
     return "\n".join([doc.page_content for doc in docs])
 
+def calcular_idade(data_nascimento: str | None) -> str:
+    if not data_nascimento:
+        return "Idade desconhecida"
+    try:
+        from datetime import date
+        nascimento = date.fromisoformat(str(data_nascimento)[:10])
+        hoje = date.today()
+        idade = hoje.year - nascimento.year - ((hoje.month, hoje.day) < (nascimento.month, nascimento.day))
+        return f"{idade} anos"
+    except:
+        return "Idade desconhecida"
+
 def buscar_contexto(input):
     docs = retriever.invoke(input["pergunta"])
     return formatar_contexto(docs)
@@ -74,6 +86,15 @@ class ChatRequest(BaseModel):
     session_id: str
     pergunta: str
 
+class SyncRequest(BaseModel):
+    id: int
+    nome: str
+    cidade: str | None = None
+    estado: str | None = None
+    data_nascimento: str | None = None
+    igreja: str | None = None
+    departamentos: str | None = None
+
 class ChatResponse(BaseModel):
     resposta: str
 
@@ -88,5 +109,40 @@ async def chat_adj(req: ChatRequest):
         config = {"configurable": {"session_id": req.session_id}}
         resposta = chain.invoke({"pergunta": req.pergunta}, config=config)
         return ChatResponse(resposta=resposta.content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/embeddings/sync")
+async def sync_embedding(req: SyncRequest):
+    try:
+        # Monta o texto igual ao da indexação original
+        idade = calcular_idade(req.data_nascimento)
+        texto = f"Nome: {req.nome}. Idade: {idade}."
+        if req.cidade:
+            texto += f" Cidade: {req.cidade}"
+            if req.estado:
+                texto += f", {req.estado}."
+            else:
+                texto += "."
+        if req.igreja:
+            texto += f" Igreja: {req.igreja}."
+        if req.departamentos:
+            texto += f" Departamentos: {req.departamentos}."
+
+        metadado = {"participante_id": req.id, "nome": req.nome}
+
+        # Remove embedding antigo do participante se existir
+        vectorstore.delete(ids=[str(req.id)])
+
+        # Adiciona embedding novo
+        vectorstore.add_texts(texts=[texto], metadatas=[metadado], ids=[str(req.id)])
+
+        # Atualiza o k do retriever
+        global retriever
+        with engine.connect() as conn:
+            total = conn.execute(text("SELECT COUNT(*) FROM participantes_adj WHERE ativo = true")).scalar()
+        retriever = vectorstore.as_retriever(search_kwargs={"k": total})
+
+        return {"status": "ok", "participante": req.nome, "texto_indexado": texto}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
