@@ -6,6 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
+from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import os
 
@@ -20,7 +21,10 @@ vectorstore = PGVector(
     collection_name="participantes_adj",
     connection=os.getenv("DATABASE_URL"),
 )
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+engine = create_engine(os.getenv("DATABASE_URL"))
+with engine.connect() as conn:
+    total = conn.execute(text("SELECT COUNT(*) FROM participantes_adj WHERE ativo = true")).scalar()
+retriever = vectorstore.as_retriever(search_kwargs={"k": total})
 
 # Históricos por sessão
 historicos = {}
