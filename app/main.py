@@ -24,7 +24,13 @@ vectorstore = PGVector(
 engine = create_engine(os.getenv("DATABASE_URL"))
 with engine.connect() as conn:
     total = conn.execute(text("SELECT COUNT(*) FROM participantes_adj WHERE ativo = true")).scalar()
-retriever = vectorstore.as_retriever(search_kwargs={"k": total})
+k_dinamico = max(1, total)
+retriever = vectorstore.as_retriever(
+    search_kwargs={
+        "k": k_dinamico,
+        "filter": {"ativo": True}
+    }
+)
 
 # Históricos por sessão
 historicos = {}
@@ -94,6 +100,7 @@ class SyncRequest(BaseModel):
     data_nascimento: str | None = None
     igreja: str | None = None
     departamentos: str | None = None
+    ativo: bool = True
 
 class DeleteRequest(BaseModel):
     id: int
@@ -132,7 +139,11 @@ async def sync_embedding(req: SyncRequest):
         if req.departamentos:
             texto += f" Departamentos: {req.departamentos}."
 
-        metadado = {"participante_id": req.id, "nome": req.nome}
+        metadado = {
+            "participante_id": str(req.id),
+            "nome": req.nome,
+            "ativo": req.ativo,
+        }
 
         # Remove embedding antigo do participante se existir
         vectorstore.delete(ids=[str(req.id)])
@@ -144,7 +155,13 @@ async def sync_embedding(req: SyncRequest):
         global retriever
         with engine.connect() as conn:
             total = conn.execute(text("SELECT COUNT(*) FROM participantes_adj WHERE ativo = true")).scalar()
-        retriever = vectorstore.as_retriever(search_kwargs={"k": total})
+        k_din = max(1, total)
+        retriever = vectorstore.as_retriever(
+            search_kwargs={
+                "k": k_din,
+                "filter": {"ativo": True}
+            }
+        )
 
         return {"status": "ok", "participante": req.nome, "texto_indexado": texto}
     except Exception as e:
@@ -169,7 +186,12 @@ async def delete_embedding(req: DeleteRequest):
             ).scalar()
 
         global retriever
-        retriever = vectorstore.as_retriever(search_kwargs={"k": max(1, total)})
+        retriever = vectorstore.as_retriever(
+            search_kwargs={
+                "k": max(1, total),
+                "filter": {"ativo": True}
+            }
+        )
 
         return {"status": "deleted", "participante_id": req.id, "rows_deleted": deleted}
     except Exception as e:
