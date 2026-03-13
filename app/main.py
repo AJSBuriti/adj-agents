@@ -95,6 +95,9 @@ class SyncRequest(BaseModel):
     igreja: str | None = None
     departamentos: str | None = None
 
+class DeleteRequest(BaseModel):
+    id: int
+
 class ChatResponse(BaseModel):
     resposta: str
 
@@ -144,5 +147,30 @@ async def sync_embedding(req: SyncRequest):
         retriever = vectorstore.as_retriever(search_kwargs={"k": total})
 
         return {"status": "ok", "participante": req.nome, "texto_indexado": texto}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/embeddings/delete")
+async def delete_embedding(req: DeleteRequest):
+    try:
+        # Remove o embedding pelo participante_id nos metadados
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                DELETE FROM langchain_pg_embedding
+                WHERE cmetadata->>'participante_id' = :pid
+            """), {"pid": str(req.id)})
+            conn.commit()
+            deleted = result.rowcount
+
+        # Atualiza o k do retriever
+        with engine.connect() as conn:
+            total = conn.execute(
+                text("SELECT COUNT(*) FROM participantes_adj WHERE ativo = true")
+            ).scalar()
+
+        global retriever
+        retriever = vectorstore.as_retriever(search_kwargs={"k": max(1, total)})
+
+        return {"status": "deleted", "participante_id": req.id, "rows_deleted": deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
